@@ -1,65 +1,44 @@
-const express = require('express');
-const Task = require('../models/Task');
-const { authenticate } = require('../middleware/auth');
+const express = require("express");
+const Task = require("../models/Task");
+const auth = require("../middleware/auth");
 const router = express.Router();
 
-router.get('/board/:boardId', authenticate, async (req, res) => {
+router.get("/project/:projectId", auth, async (req, res) => {
   try {
-    const tasks = await Task.find({ board: req.params.boardId, isArchived: false })
-      .populate('assignees', 'name email avatar')
-      .populate('comments.user', 'name avatar')
-      .sort({ order: 1 });
+    const tasks = await Task.find({ project: req.params.projectId }).populate("assignee creator", "name email avatar").sort({ order: 1 });
     res.json(tasks);
-  } catch (err) { res.status(500).json({ error: err.message }); }
+  } catch (error) { res.status(500).json({ error: "Server error" }); }
 });
 
-router.post('/', authenticate, async (req, res) => {
+router.post("/", auth, async (req, res) => {
   try {
-    const { title, description, board, columnId, priority, dueDate, assignees, labels } = req.body;
-    const taskCount = await Task.countDocuments({ board, columnId });
-    const task = new Task({ title, description, board, columnId, priority, dueDate, assignees, labels, order: taskCount });
+    const count = await Task.countDocuments({ project: req.body.project, column: req.body.column || "todo" });
+    const task = new Task({ ...req.body, creator: req.user._id, order: count });
     await task.save();
-    const populated = await task.populate('assignees', 'name email avatar');
-    res.status(201).json(populated);
-  } catch (err) { res.status(500).json({ error: err.message }); }
+    res.status(201).json(task);
+  } catch (error) { res.status(500).json({ error: "Server error" }); }
 });
 
-router.put('/:id', authenticate, async (req, res) => {
+router.put("/:id", auth, async (req, res) => {
   try {
-    const task = await Task.findByIdAndUpdate(req.params.id, req.body, { new: true })
-      .populate('assignees', 'name email avatar');
-    if (!task) return res.status(404).json({ error: 'Task not found' });
+    const task = await Task.findByIdAndUpdate(req.params.id, { $set: req.body }, { new: true });
+    if (!task) return res.status(404).json({ error: "Not found" });
     res.json(task);
-  } catch (err) { res.status(500).json({ error: err.message }); }
+  } catch (error) { res.status(500).json({ error: "Server error" }); }
 });
 
-router.post('/:id/comments', authenticate, async (req, res) => {
+router.patch("/:id/move", auth, async (req, res) => {
   try {
-    const task = await Task.findById(req.params.id);
-    if (!task) return res.status(404).json({ error: 'Task not found' });
-    task.comments.push({ user: req.userId, text: req.body.text });
-    await task.save();
-    const populated = await task.populate('comments.user', 'name avatar');
-    res.json(populated);
-  } catch (err) { res.status(500).json({ error: err.message }); }
+    const task = await Task.findByIdAndUpdate(req.params.id, { $set: req.body }, { new: true });
+    res.json(task);
+  } catch (error) { res.status(500).json({ error: "Server error" }); }
 });
 
-router.delete('/:id', authenticate, async (req, res) => {
+router.delete("/:id", auth, async (req, res) => {
   try {
-    await Task.findByIdAndUpdate(req.params.id, { isArchived: true });
-    res.json({ message: 'Task archived' });
-  } catch (err) { res.status(500).json({ error: err.message }); }
-});
-
-router.put('/reorder/batch', authenticate, async (req, res) => {
-  try {
-    const { tasks } = req.body;
-    const operations = tasks.map(t => ({
-      updateOne: { filter: { _id: t.id }, update: { columnId: t.columnId, order: t.order } }
-    }));
-    await Task.bulkWrite(operations);
-    res.json({ message: 'Tasks reordered' });
-  } catch (err) { res.status(500).json({ error: err.message }); }
+    await Task.findOneAndDelete({ _id: req.params.id, creator: req.user._id });
+    res.json({ message: "Deleted" });
+  } catch (error) { res.status(500).json({ error: "Server error" }); }
 });
 
 module.exports = router;
